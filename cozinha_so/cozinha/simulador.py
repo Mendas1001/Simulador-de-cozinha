@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import random
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence
 
-from .cozinheiro import Cozinheiro, Evento
+from .cozinheiro import Cozinheiro, Evento, TipoEvento
 from .escalonadores import ESCALONADORES, Escalonador
 from .esteira import EsteiraPedidos
 from .modelos import Pedido
@@ -80,6 +81,19 @@ class Simulacao:
         for ouvinte in self._ouvintes:
             ouvinte(evento)
 
+    def _anunciar_chegadas(self) -> None:
+        """
+        Emite um evento CHEGADA no instante em que cada pedido entra na esteira.
+        Serve só para a visualização/log: quem decide quando um pedido pode ser
+        pego é a própria esteira (que compara a chegada com o relógio).
+        """
+        for p in sorted(self._pedidos, key=lambda p: (p.chegada, p.id)):
+            falta = self.relogio.segundos(p.chegada - self.relogio.agora())
+            if falta > 0:
+                time.sleep(falta)
+            self._emitir(Evento(TipoEvento.CHEGADA, self.escalonador.nome,
+                                p.chegada, None, p.id, p.burst))
+
     def executar(self) -> ResultadoSimulacao:
         """Roda a simulação até todos os pedidos serem concluídos (bloqueante)."""
         self.esteira.adicionar_varios(self._pedidos)
@@ -88,11 +102,15 @@ class Simulacao:
         threads = [Cozinheiro(n, self.escalonador.nome, self.esteira,
                               self.relogio, self._emitir) for n in nomes]
 
+        anunciador = threading.Thread(target=self._anunciar_chegadas, daemon=True)
+
         self.relogio.iniciar()          # t = 0 para todo mundo
+        anunciador.start()
         for t in threads:
             t.start()
         for t in threads:
             t.join()
+        anunciador.join()
 
         return ResultadoSimulacao(self.escalonador.nome,
                                   self.esteira.concluidos(), nomes)

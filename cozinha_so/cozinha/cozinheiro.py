@@ -22,6 +22,7 @@ from .relogio import Relogio
 
 
 class TipoEvento(Enum):
+    CHEGADA = "chegada" # pedido entrou na esteira (hora da chegada)
     INICIO = "inicio"   # cozinheiro pegou um pedido
     FIM = "fim"         # cozinheiro terminou um pedido
     OCIOSO = "ocioso"   # cozinheiro encerrou (fila vazia)
@@ -32,7 +33,7 @@ class Evento:
     tipo: TipoEvento
     algoritmo: str
     tempo: int              # tempo da simulação (unidades)
-    cozinheiro: str
+    cozinheiro: str | None   # None em eventos da esteira (CHEGADA)
     pedido_id: int | None = None
     burst: int | None = None
 

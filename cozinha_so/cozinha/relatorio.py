@@ -10,10 +10,20 @@ Nada aqui altera a simulação; só lê eventos e resultados.
 from __future__ import annotations
 
 import threading
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict
 
 from .cozinheiro import Evento, TipoEvento
 from .simulador import ResultadoSimulacao
+
+
+def fmt2(x: float) -> str:
+    """
+    Formata com 2 casas arredondando 'meio para cima' (3.125 -> 3.13).
+    O f"{x:.2f}" do Python arredonda para o par mais próximo (3.125 -> 3.12),
+    o que divergia do que a interface web mostra e do cálculo feito à mão.
+    """
+    return str(Decimal(repr(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 # ----------------------------------------------------------------------
@@ -30,7 +40,9 @@ class ImpressoraConsole:
 
     def __call__(self, ev: Evento) -> None:
         prefixo = f"[t={ev.tempo:>3}] [{ev.algoritmo:<4}]"
-        if ev.tipo is TipoEvento.INICIO:
+        if ev.tipo is TipoEvento.CHEGADA:
+            msg = f"Pedido {ev.pedido_id} chegou na esteira (preparo: {ev.burst}u)"
+        elif ev.tipo is TipoEvento.INICIO:
             msg = (f"{ev.cozinheiro} {ev.algoritmo} pegou o Pedido {ev.pedido_id} "
                    f"(preparo: {ev.burst}u)")
         elif ev.tipo is TipoEvento.FIM:
@@ -91,8 +103,8 @@ def relatorio_algoritmo(res: ResultadoSimulacao) -> str:
         "Gráfico de Gantt:",
         gantt_texto(res),
         "",
-        f"Tempo Médio de Espera (TME):       {res.tme:.2f}",
-        f"Tempo Médio de Turnaround (TMT):   {res.tmt:.2f}",
+        f"Tempo Médio de Espera (TME):       {fmt2(res.tme)}",
+        f"Tempo Médio de Turnaround (TMT):   {fmt2(res.tmt)}",
         f"Duração total (makespan):          {res.duracao}",
     ])
 
@@ -105,12 +117,12 @@ def relatorio_comparativo(resultados: Dict[str, ResultadoSimulacao]) -> str:
     partes += ["", "=" * 70, "RESUMO", "=" * 70,
                f"{'Algoritmo':<10}{'TME':>8}{'TMT':>8}{'Duração':>10}"]
     for res in resultados.values():
-        partes.append(f"{res.algoritmo:<10}{res.tme:>8.2f}{res.tmt:>8.2f}{res.duracao:>10}")
+        partes.append(f"{res.algoritmo:<10}{fmt2(res.tme):>8}{fmt2(res.tmt):>8}{res.duracao:>10}")
 
     melhor = min(resultados.values(), key=lambda r: r.tme)
     empate = [r for r in resultados.values() if abs(r.tme - melhor.tme) < 1e-9]
     if len(empate) > 1:
         partes.append("\nResultado: empate no TME.")
     else:
-        partes.append(f"\nMenor TME: {melhor.algoritmo} ({melhor.tme:.2f}).")
+        partes.append(f"\nMenor TME: {melhor.algoritmo} ({fmt2(melhor.tme)}).")
     return "\n".join(partes)

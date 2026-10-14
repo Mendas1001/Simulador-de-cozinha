@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cozinha SO · FCFS × SJF</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ===== Barra superior: controles da simulação ===== -->
+  <header class="topo">
+    <div class="marca">
+      <span class="marca-icone">🍳</span>
+      <div>
+        <h1>Cozinha SO</h1>
+        <p>Escalonamento FCFS × SJF com threads e exclusão mútua</p>
+      </div>
+    </div>
+
+    <div class="controles">
+      <label>Cozinheiros
+        <input type="number" id="cozinheiros" min="1" max="5" value="2">
+      </label>
+      <label>Velocidade
+        <select id="escala">
+          <option value="0.6">Lenta</option>
+          <option value="0.3" selected>Normal</option>
+          <option value="0.12">Rápida</option>
+        </select>
+      </label>
+      <label>Carga de pedidos
+        <select id="carga">
+          <option value="padrao" selected>Padrão (8 pedidos)</option>
+          <option value="aleatoria">Aleatória</option>
+        </select>
+      </label>
+      <label id="lbl-n" hidden>Pedidos
+        <input type="number" id="n" min="1" max="30" value="10">
+      </label>
+      <label id="lbl-seed" hidden>Seed
+        <input type="text" id="seed" placeholder="auto" size="7">
+      </label>
+      <button id="btn-iniciar" type="button">▶ Iniciar simulação</button>
+      <span id="status" class="status">Pronto</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Estado vazio, antes da primeira simulação -->
+    <section id="vazio" class="vazio-inicial">
+      <div class="vazio-emoji">👨‍🍳🍕🍝🍣</div>
+      <h2>A cozinha está vazia</h2>
+      <p>Escolha as opções acima e clique em <strong>Iniciar simulação</strong>.
+         FCFS e SJF vão receber exatamente os mesmos pedidos e rodar lado a lado.</p>
+    </section>
+
+    <!-- Painéis FCFS e SJF (montados por app.js) -->
+    <section id="paineis" class="paineis"></section>
+
+    <!-- Comparativo final (aparece quando a simulação termina) -->
+    <section id="comparativo" class="comparativo" hidden></section>
+  </main>
+
+  <!-- ===== Template de um painel (um por algoritmo) ===== -->
+  <template id="tpl-painel">
+    <article class="painel">
+      <header class="painel-topo">
+        <div>
+          <h2 class="alg-titulo"></h2>
+          <p class="alg-desc"></p>
+        </div>
+        <div class="relogio">
+          <small>tempo</small>
+          <strong data-el="relogio">0.0</strong>
+          <span class="selo" data-el="selo">em andamento</span>
+        </div>
+      </header>
+
+      <div class="bloco">
+        <h3>📥 Esteira de pedidos <small data-el="faltam"></small></h3>
+        <div class="esteira" data-el="esteira"></div>
+      </div>
+
+      <div class="bloco">
+        <h3>👨‍🍳 Cozinheiros</h3>
+        <div class="estacoes" data-el="estacoes"></div>
+      </div>
+
+      <div class="bloco">
+        <h3>🛵 Saída para entrega</h3>
+        <div class="entrega" data-el="entrega"></div>
+      </div>
+
+      <div class="bloco">
+        <h3>📊 Gráfico de Gantt ao vivo</h3>
+        <div class="gantt" data-el="gantt"></div>
+      </div>
+
+      <div class="metricas">
+        <div><small>Concluídos</small><strong data-el="m-conc">0/0</strong></div>
+        <div><small>Na fila agora</small><strong data-el="m-fila">0</strong></div>
+        <div><small>TME parcial</small><strong data-el="m-tme">—</strong></div>
+      </div>
+
+      <details class="logbox">
+        <summary>Log em tempo real</summary>
+        <div class="log" data-el="log"></div>
+      </details>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
