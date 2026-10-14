@@ -9,7 +9,9 @@ Nada aqui altera a simulação; só lê eventos e resultados.
 
 from __future__ import annotations
 
+import sys
 import threading
+import time
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict
 
@@ -31,14 +33,28 @@ def fmt2(x: float) -> str:
 # ----------------------------------------------------------------------
 class ImpressoraConsole:
     """
-    Ouvinte de eventos que imprime no terminal.
-    O lock evita que linhas de threads diferentes se misturem no meio.
+    Ouvinte de eventos que imprime no terminal (e, opcionalmente, repassa
+    cada trecho escrito para a interface web via `ao_escrever`).
+
+    sincronizada=True  -> um lock garante que cada linha sai INTEIRA.
+    sincronizada=False -> SEM lock e escrevendo cada linha em pedaços
+                          pequenos: quando duas threads escrevem ao mesmo
+                          tempo, os pedaços se intercalam e a saída sai
+                          embaralhada (o mesmo problema de uma impressora
+                          compartilhada sem exclusão mútua).
     """
 
-    def __init__(self) -> None:
+    PEDACO = 14          # caracteres por escrita no modo sem sincronização
+    PAUSA = 0.004        # s entre pedaços: dá chance de outra thread escrever no meio
+
+    def __init__(self, sincronizada: bool = True, ao_escrever=None) -> None:
+        self._sincronizada = sincronizada
+        self._ao_escrever = ao_escrever          # callback(trecho, algoritmo)
         self._lock = threading.Lock()
 
-    def __call__(self, ev: Evento) -> None:
+    @staticmethod
+    def formatar(ev: Evento) -> str:
+        """Texto da linha (só caracteres que o terminal do Windows aceita)."""
         prefixo = f"[t={ev.tempo:>3}] [{ev.algoritmo:<4}]"
         if ev.tipo is TipoEvento.CHEGADA:
             msg = f"Pedido {ev.pedido_id} chegou na esteira (preparo: {ev.burst}u)"
@@ -47,10 +63,29 @@ class ImpressoraConsole:
                    f"(preparo: {ev.burst}u)")
         elif ev.tipo is TipoEvento.FIM:
             msg = f"{ev.cozinheiro} terminou o Pedido {ev.pedido_id}"
+        elif ev.tipo is TipoEvento.CONFLITO:
+            msg = (f"[!] CONFLITO: {ev.outro} e {ev.cozinheiro} pegaram o "
+                   f"Pedido {ev.pedido_id} ao mesmo tempo")
         else:
             msg = f"{ev.cozinheiro} ficou ocioso (sem mais pedidos)"
-        with self._lock:
-            print(f"{prefixo} {msg}", flush=True)
+        return f"{prefixo} {msg}\n"
+
+    def __call__(self, ev: Evento) -> None:
+        linha = self.formatar(ev)
+        if self._sincronizada:
+            with self._lock:                       # linha inteira, sem intercalar
+                self._escrever(linha, ev.algoritmo)
+        else:
+            # SEM lock e em pedaços: outra thread pode escrever no meio.
+            for k in range(0, len(linha), self.PEDACO):
+                self._escrever(linha[k:k + self.PEDACO], ev.algoritmo)
+                time.sleep(self.PAUSA)
+
+    def _escrever(self, trecho: str, algoritmo: str) -> None:
+        sys.stdout.write(trecho)
+        sys.stdout.flush()
+        if self._ao_escrever:
+            self._ao_escrever(trecho, algoritmo)
 
 
 # ----------------------------------------------------------------------
@@ -96,7 +131,7 @@ def gantt_texto(res: ResultadoSimulacao) -> str:
 
 
 def relatorio_algoritmo(res: ResultadoSimulacao) -> str:
-    return "\n".join([
+    linhas = [
         f"=== {res.algoritmo} ===",
         tabela_pedidos(res),
         "",
@@ -106,11 +141,23 @@ def relatorio_algoritmo(res: ResultadoSimulacao) -> str:
         f"Tempo Médio de Espera (TME):       {fmt2(res.tme)}",
         f"Tempo Médio de Turnaround (TMT):   {fmt2(res.tmt)}",
         f"Duração total (makespan):          {res.duracao}",
-    ])
+    ]
+    if not res.sincronizada:
+        total = len({p.id for p in res.pedidos})
+        linhas += [
+            "",
+            "[!] EXECUÇÃO SEM SINCRONIZAÇÃO - resultados NÃO são confiáveis:",
+            f"    pedidos diferentes: {total} | preparos realizados: {len(res.pedidos)}",
+            f"    pedidos pegos por 2 cozinheiros (conflitos): {res.conflitos}",
+            f"    contador de entregas: {res.contador_entregas} (esperado {len(res.pedidos)})",
+        ]
+    return "\n".join(linhas)
 
 
 def relatorio_comparativo(resultados: Dict[str, ResultadoSimulacao]) -> str:
     partes = ["", "=" * 70, "RELATÓRIO COMPARATIVO", "=" * 70]
+    if any(not r.sincronizada for r in resultados.values()):
+        partes.append("[!] MODO SEM SINCRONIZAÇÃO (condição de corrida): números contaminados.")
     for res in resultados.values():
         partes += ["", relatorio_algoritmo(res)]
 

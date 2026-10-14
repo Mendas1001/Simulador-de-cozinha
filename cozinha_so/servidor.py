@@ -5,6 +5,7 @@ Como funciona:
   1. O navegador chama  POST /api/iniciar  com as opções da simulação.
   2. Aqui rodamos `comparar(..., simultaneo=True)` numa thread de fundo
      (FCFS e SJF ao mesmo tempo, cada um com seus cozinheiros).
+     Com `sincronizada=False` a esteira roda SEM Lock (demo de condição de corrida).
   3. Cada Evento emitido pelos cozinheiros vira um dicionário guardado
      numa lista (histórico) protegida por uma Condition.
   4. O navegador abre  GET /api/stream  (Server-Sent Events) e recebe os
@@ -71,12 +72,19 @@ _atual: Optional[Execucao] = None
 _trava = threading.Lock()          # protege a troca de `_atual`
 
 
-def _rodar(exe: Execucao, pedidos, cozinheiros: int, escala: float) -> None:
+def _rodar(exe: Execucao, pedidos, cozinheiros: int, escala: float,
+           sincronizada: bool) -> None:
     """Corpo da thread de fundo: roda FCFS x SJF e publica o resultado."""
     try:
+        # O console escreve no terminal E manda cada trecho escrito para a tela:
+        # o log da interface é a saída real do console (inclusive embaralhada).
+        console = ImpressoraConsole(
+            sincronizada,
+            ao_escrever=lambda trecho, alg: exe.publicar(
+                {"tipo": "console", "algoritmo": alg, "texto": trecho}))
         resultados = comparar(pedidos, num_cozinheiros=cozinheiros, escala=escala,
-                              simultaneo=True,
-                              ouvintes=[exe.ouvinte, ImpressoraConsole()])
+                              simultaneo=True, sincronizada=sincronizada,
+                              ouvintes=[exe.ouvinte, console])
         exe.publicar({"tipo": "fim_geral",
                       "resultados": {n: r.to_dict() for n, r in resultados.items()}})
     except Exception as e:                       # noqa: BLE001 - vai para a tela
@@ -114,6 +122,7 @@ def iniciar():
         n = int(dados.get("n", 10))
         seed = dados.get("seed")
         seed = int(seed) if seed not in (None, "") else random.randrange(1_000_000)
+        sincronizada = bool(dados.get("sincronizada", True))
     except (TypeError, ValueError):
         return jsonify(erro="Opções inválidas."), 400
     if not 1 <= cozinheiros <= 5:
@@ -137,12 +146,13 @@ def iniciar():
         "algoritmos": ["FCFS", "SJF"],
         "cozinheiros": [f"Cozinheiro {i + 1}" for i in range(cozinheiros)],
         "escala": escala,
+        "sincronizada": sincronizada,
         "carga": carga,
         "seed": seed if carga == "aleatoria" else None,
         "inicio_epoch_ms": int(time.time() * 1000),   # relógio comum da tela
         "pedidos": [p.to_dict() for p in pedidos],
     })
-    threading.Thread(target=_rodar, args=(exe, pedidos, cozinheiros, escala),
+    threading.Thread(target=_rodar, args=(exe, pedidos, cozinheiros, escala, sincronizada),
                      daemon=True).start()
     return jsonify(ok=True)
 

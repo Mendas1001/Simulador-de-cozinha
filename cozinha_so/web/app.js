@@ -5,10 +5,17 @@
      1. Botão "Iniciar" -> POST /api/iniciar
      2. Abrimos um EventSource em /api/stream (Server-Sent Events)
      3. Cada evento do backend chega aqui como JSON:
-          config | chegada | inicio | fim | ocioso | fim_geral | erro
+          config | chegada | inicio | fim | ocioso | conflito | console |
+          fim_geral | erro
         e atualiza só o pedaço da tela que mudou.
      4. Um laço requestAnimationFrame anima o que depende do tempo
         (barras de progresso, relógio, Gantt crescendo).
+
+   Modelo de dados da tela:
+     - "pedido": o que chegou na esteira (um por id)
+     - "preparo" (exec): uma vez que um cozinheiro cozinhou um pedido.
+       Com sincronização há exatamente 1 preparo por pedido. SEM
+       sincronização pode haver 2 (pedido pego por dois cozinheiros).
    ========================================================== */
 "use strict";
 
@@ -40,6 +47,10 @@ $("#carga").addEventListener("change", () => {
   $("#lbl-n").hidden = !aleatoria;
   $("#lbl-seed").hidden = !aleatoria;
 });
+$("#sync").addEventListener("change", () => {
+  $("#sync-txt").textContent = $("#sync").checked ? "Ligada" : "Desligada";
+  $("#sync-txt").style.color = $("#sync").checked ? "" : "var(--erro)";
+});
 btn.addEventListener("click", iniciar);
 
 function definirStatus(texto, classe = "") {
@@ -57,6 +68,7 @@ async function iniciar() {
     carga: $("#carga").value,
     n: Number($("#n").value),
     seed: $("#seed").value.trim(),
+    sincronizada: $("#sync").checked,
   };
   try {
     const r = await fetch("/api/iniciar", {
@@ -90,27 +102,57 @@ function abrirStream() {
 
 function tratar(ev) {
   switch (ev.tipo) {
-    case "config":
+    case "config": {
+      // Servidor antigo (Python ainda carregado na memória): não envia "sincronizada".
+      // Em vez de interpretar como "sem sincronização", avisamos o que fazer.
+      if (typeof ev.sincronizada !== "boolean") { servidorDesatualizado(); break; }
       montarPaineis(ev);
-      definirStatus(ev.seed != null ? `Em execução… (seed ${ev.seed})` : "Em execução…", "rodando");
+      // reflete na barra de controles a chave usada (útil após F5)
+      $("#sync").checked = ev.sincronizada;
+      $("#sync").dispatchEvent(new Event("change"));
+      const sufixo = ev.sincronizada ? "" : " · SEM sincronização";
+      const seed = ev.seed != null ? ` (seed ${ev.seed})` : "";
+      definirStatus(`Em execução…${seed}${sufixo}`, ev.sincronizada ? "rodando" : "erro");
       btn.disabled = true;
       break;
+    }
     case "chegada":
     case "inicio":
     case "fim":
-    case "ocioso": {
+    case "ocioso":
+    case "conflito":
+    case "console": {
       const p = porAlg.get(ev.algoritmo);
       if (p) aplicar(p, ev);
       break;
     }
     case "fim_geral":
+      if (!cfg) break;
       mostrarComparativo(ev.resultados);
-      finalizar("Concluída ✓", "ok");
+      finalizar(cfg.sincronizada ? "Concluída ✓" : "Concluída (sem sincronização)", cfg.sincronizada ? "ok" : "erro");
       break;
     case "erro":
       finalizar("Erro: " + ev.mensagem, "erro");
       break;
   }
+}
+
+function servidorDesatualizado() {
+  cfg = null; paineis = []; porAlg = new Map();
+  encerrado = true;
+  if (es) es.close();
+  $("#vazio").hidden = true;
+  $("#comparativo").hidden = true;
+  $("#paineis").innerHTML = `
+    <div class="aviso-sync" style="grid-column: 1 / -1">
+      <strong>⚠️ O servidor em execução é de uma versão antiga</strong>
+      <p>A página foi atualizada, mas o <code>servidor.py</code> que está rodando ainda é o anterior
+         (o Python não recarrega o código sozinho). No terminal, pare o servidor com <b>Ctrl+C</b>
+         e rode de novo: <code>python servidor.py</code>. Confira também se a pasta
+         <code>cozinha/</code> foi substituída pela versão nova.</p>
+    </div>`;
+  definirStatus("Servidor desatualizado: reinicie o servidor.py", "erro");
+  btn.disabled = false;
 }
 
 function finalizar(texto, classe) {
@@ -136,6 +178,7 @@ function montarPaineis(c) {
   for (const alg of c.algoritmos) {
     const el = tpl.content.firstElementChild.cloneNode(true);
     el.dataset.alg = alg;
+    el.classList.toggle("sem-sync", !c.sincronizada);
     $(".alg-titulo", el).textContent = ALGS[alg].titulo;
     $(".alg-desc", el).textContent = ALGS[alg].desc;
     raiz.appendChild(el);
@@ -144,21 +187,30 @@ function montarPaineis(c) {
     const p = {
       alg, el, q,
       pedidos: new Map(),     // id -> estado do pedido neste algoritmo
+      execs: [],              // todos os PREPAROS (1 por pedido; 2 se houve duplicidade)
       cooks: new Map(),       // nome -> estação
       chips: new Map(),       // id -> chip na esteira
       trilhas: new Map(),     // nome -> trilha do Gantt
       total: c.pedidos.length,
       faltam: c.pedidos.length, naFila: 0, concluidos: 0,
-      iniciados: 0, somaEspera: 0,
+      iniciados: 0, somaEspera: 0, conflitos: 0,
+      logBuf: "",
       fimTempo: null, eixoT: null,
     };
+
+    p.q("modo").textContent = c.sincronizada
+      ? "🔒 Lock ativado: exclusão mútua na esteira"
+      : "⚠️ SEM sincronização: esteira sem Lock (condição de corrida)";
+    p.q("box-conf").hidden = c.sincronizada;
+    p.q("logbox").open = !c.sincronizada;      // sem sync: já mostra a saída embaralhada
+    p.q("log").classList.toggle("caos", !c.sincronizada);
 
     // cada algoritmo tem sua PRÓPRIA cópia do estado dos pedidos
     for (const d of c.pedidos) {
       p.pedidos.set(d.id, {
         id: d.id, chegada: d.chegada, burst: d.burst,
         estado: "futuro",       // futuro -> fila -> preparando -> pronto
-        inicio: null, fim: null, cozinheiro: null, bloco: null,
+        inicio: null, fim: null, cozinheiro: null,
       });
     }
 
@@ -179,7 +231,7 @@ function montarPaineis(c) {
         </div>`;
       p.q("estacoes").appendChild(est);
       p.cooks.set(nome, {
-        nome, el: est, status: "ocioso", pedido: null, ultimo: null, flash: false,
+        nome, el: est, status: "ocioso", exec: null, ultimo: null, flash: false,
         statusEl: $(".est-status", est), barra: $(".barra i", est),
         prog: $(".prog", est), emoji: $(".prato .emoji", est),
       });
@@ -225,47 +277,54 @@ function aplicar(p, ev) {
         const chip = criarChip(ped);
         p.chips.set(ped.id, chip);
         p.q("esteira").appendChild(chip);
-        log(p, ev.tempo, `Pedido ${ped.id} chegou na esteira (preparo: ${ped.burst}u)`);
       }
       break;
 
     case "inicio": {
       const cook = p.cooks.get(ev.cozinheiro);
-      if (ped.estado === "futuro") p.faltam--;
-      else if (ped.estado === "fila") p.naFila--;
-      const chip = p.chips.get(ped.id);
-      if (chip) { chip.remove(); p.chips.delete(ped.id); }
+      // Pedido que JÁ estava sendo preparado (ou pronto) e foi pego de novo:
+      // só acontece sem sincronização (condição de corrida).
+      const duplicado = ped.estado === "preparando" || ped.estado === "pronto";
 
-      ped.estado = "preparando";
-      ped.inicio = ev.tempo;
-      ped.cozinheiro = ev.cozinheiro;
+      if (!duplicado) {
+        if (ped.estado === "futuro") p.faltam--;
+        else if (ped.estado === "fila") p.naFila--;
+        const chip = p.chips.get(ped.id);
+        if (chip) { chip.remove(); p.chips.delete(ped.id); }
+        ped.estado = "preparando";
+        ped.inicio = ev.tempo;
+        ped.cozinheiro = ev.cozinheiro;
+      }
       p.iniciados++;
       p.somaEspera += ev.tempo - ped.chegada;
 
+      const exec = { id: ped.id, ped, cook, inicio: ev.tempo, burst: ev.burst,
+                     fim: null, duplicado, bloco: null };
+      p.execs.push(exec);
+      cook.exec = exec;
       cook.status = "preparando";
-      cook.pedido = ped;
       cook.flash = false;
       atualizarEstacao(cook);
-      criarBlocoGantt(p, ped);
-      log(p, ev.tempo, `${ev.cozinheiro} ${p.alg} pegou o Pedido ${ped.id} (preparo: ${ped.burst}u)`);
+      criarBlocoGantt(p, exec);
       break;
     }
 
     case "fim": {
       const cook = p.cooks.get(ev.cozinheiro);
-      ped.estado = "pronto";
-      ped.fim = ev.tempo;
+      const exec = cook.exec;
+      if (!exec) break;
+      exec.fim = ev.tempo;
+      if (!exec.duplicado) { ped.estado = "pronto"; ped.fim = ev.tempo; }
       p.concluidos++;
 
       cook.status = "ocioso";
-      cook.pedido = null;
+      cook.exec = null;
       cook.ultimo = ped.id;
       cook.flash = true;                       // mostra "Concluiu o Pedido X" por um instante
       atualizarEstacao(cook);
       setTimeout(() => { cook.flash = false; atualizarEstacao(cook); }, 1400);
 
-      p.q("entrega").appendChild(criarChip(ped, true));
-      log(p, ev.tempo, `${ev.cozinheiro} terminou o Pedido ${ped.id}`);
+      p.q("entrega").appendChild(criarChip(ped, true, exec));
       break;
     }
 
@@ -273,27 +332,49 @@ function aplicar(p, ev) {
       const cook = p.cooks.get(ev.cozinheiro);
       cook.status = "encerrado";
       atualizarEstacao(cook);
-      log(p, ev.tempo, `${ev.cozinheiro} encerrou (sem mais pedidos)`);
-      // Todos encerraram? Congela o relógio deste painel no fim do último pedido.
+      // Todos encerraram? Congela o relógio deste painel no fim do último preparo.
       if ([...p.cooks.values()].every((c) => c.status === "encerrado")) {
-        p.fimTempo = Math.max(...[...p.pedidos.values()].map((d) => d.fim ?? 0));
+        p.fimTempo = Math.max(...p.execs.map((e) => e.fim ?? 0));
         const selo = p.q("selo");
         selo.textContent = "finalizado";
         selo.classList.add("fim");
       }
       break;
     }
+
+    case "conflito": {
+      p.conflitos++;
+      const a = p.q("alerta");
+      a.hidden = false;
+      a.textContent = `⚠️ CONDIÇÃO DE CORRIDA (t=${ev.tempo}): ${ev.outro} e ${ev.cozinheiro} ` +
+                      `pegaram o Pedido ${ev.pedido_id} ao mesmo tempo!`;
+      a.classList.remove("pisca");
+      void a.offsetWidth;                       // reinicia a animação
+      a.classList.add("pisca");
+      break;
+    }
+
+    case "console": {
+      // O log é a saída REAL do console, pedaço por pedaço. Sem sincronização
+      // os pedaços de threads diferentes se intercalam: saída embaralhada.
+      p.logBuf = (p.logBuf + ev.texto).slice(-8000);
+      const box = p.q("log");
+      box.textContent = p.logBuf.split("\n").slice(-70).join("\n");
+      box.scrollTop = box.scrollHeight;
+      return;                                    // nada mais a atualizar
+    }
   }
   atualizarPainel(p);
 }
 
 // ---------------------------------------------------------------- pedaços da tela
-function criarChip(ped, entregue = false) {
+function criarChip(ped, entregue = false, exec = null) {
+  const dup = !!(exec && exec.duplicado);
   const el = document.createElement("div");
-  el.className = "chip" + (entregue ? " entregue" : "");
+  el.className = "chip" + (entregue ? " entregue" : "") + (dup ? " dup" : "");
   el.style.setProperty("--h", matiz(ped.id));
-  const detalhe = entregue
-    ? `espera ${ped.inicio - ped.chegada}u`
+  const detalhe = dup ? "⚠ duplicado"
+    : entregue ? `espera ${(exec ? exec.inicio : ped.inicio) - ped.chegada}u`
     : `${ped.burst}u`;
   el.title = `Pedido ${ped.id} · chegada ${ped.chegada} · preparo ${ped.burst}u`;
   el.innerHTML = `<span class="emoji">${emojiDe(ped.id)}</span><b>P${ped.id}</b><small>${detalhe}</small>`;
@@ -302,37 +383,45 @@ function criarChip(ped, entregue = false) {
 
 function atualizarEstacao(cook) {
   const el = cook.el;
+  const dup = cook.status === "preparando" && cook.exec.duplicado;
   el.classList.toggle("preparando", cook.status === "preparando");
+  el.classList.toggle("conflito", dup);
   el.classList.toggle("encerrado", cook.status === "encerrado");
   el.classList.toggle("pronto-flash", cook.flash);
 
   let texto;
-  if (cook.status === "preparando") texto = `Preparando o Pedido ${cook.pedido.id}`;
-  else if (cook.status === "encerrado") texto = "Encerrou o expediente";
+  if (cook.status === "preparando") {
+    texto = `Preparando o Pedido ${cook.exec.id}` + (dup ? " ⚠ DUPLICADO" : "");
+  } else if (cook.status === "encerrado") texto = "Encerrou o expediente";
   else texto = cook.flash ? `✓ Concluiu o Pedido ${cook.ultimo}` : "Ocioso";
   cook.statusEl.textContent = texto;
 
-  cook.emoji.textContent = cook.status === "preparando" ? emojiDe(cook.pedido.id) : "🍽️";
+  cook.emoji.textContent = cook.status === "preparando" ? emojiDe(cook.exec.id) : "🍽️";
   if (cook.status !== "preparando") {
     cook.barra.style.width = "0%";
     cook.prog.textContent = "—";
   }
 }
 
-function criarBlocoGantt(p, ped) {
+function criarBlocoGantt(p, exec) {
   const b = document.createElement("div");
-  b.className = "g-bloco";
-  b.style.setProperty("--h", matiz(ped.id));
-  b.textContent = "P" + ped.id;
-  b.title = `Pedido ${ped.id} · ${ped.cozinheiro} · início ${ped.inicio}`;
-  p.trilhas.get(ped.cozinheiro).appendChild(b);
-  ped.bloco = b;                    // posição/largura são ajustadas em cada frame
+  b.className = "g-bloco" + (exec.duplicado ? " dup" : "");
+  b.style.setProperty("--h", matiz(exec.id));
+  b.textContent = (exec.duplicado ? "⚠" : "") + "P" + exec.id;
+  b.title = `Pedido ${exec.id} · ${exec.cook.nome} · início ${exec.inicio}` + (exec.duplicado ? " (DUPLICADO)" : "");
+  p.trilhas.get(exec.cook.nome).appendChild(b);
+  exec.bloco = b;                   // posição/largura são ajustadas em cada frame
 }
 
 function atualizarPainel(p) {
-  p.q("m-conc").textContent = `${p.concluidos}/${p.total}`;
+  const conc = p.q("m-conc");
+  conc.textContent = `${p.concluidos}/${p.total}`;
+  conc.classList.toggle("ruim", p.concluidos > p.total);   // mais preparos que pedidos!
   p.q("m-fila").textContent = p.naFila;
-  p.q("m-tme").textContent = p.iniciados ? fmt(p.somaEspera / p.iniciados) : "—";
+  const tme = p.q("m-tme");
+  tme.textContent = p.iniciados ? fmt(p.somaEspera / p.iniciados) : "—";
+  tme.classList.toggle("ruim", p.conflitos > 0);           // média contaminada
+  p.q("m-conf").textContent = p.conflitos;
   p.q("faltam").textContent = p.faltam > 0 ? `· ${p.faltam} ainda a chegar` : "";
   vazioMsg(p.q("esteira"), "Nenhum pedido aguardando");
   vazioMsg(p.q("entrega"), "Nenhuma entrega ainda");
@@ -352,15 +441,6 @@ function vazioMsg(contenedor, msg) {
   }
 }
 
-function log(p, tempo, texto) {
-  const box = p.q("log");
-  const linha = document.createElement("div");
-  linha.innerHTML = `<b>t=${tempo}</b> ${texto}`;
-  box.appendChild(linha);
-  while (box.children.length > 80) box.firstChild.remove();
-  box.scrollTop = box.scrollHeight;
-}
-
 // ---------------------------------------------------------------- animação (rAF)
 // Eixo de tempo do Gantt: o MESMO nos dois painéis, para ficarem comparáveis.
 function calcularT(agora) {
@@ -369,6 +449,7 @@ function calcularT(agora) {
   }
   const nCook = cfg.cozinheiros.length;
   const soma = cfg.pedidos.reduce((s, d) => s + d.burst, 0);
+  // sem sincronização o trabalho pode ser feito em dobro: dá mais espaço ao eixo
   const base = Math.ceil(soma / nCook) + 2;
   const maisAdiantado = Math.max(...paineis.map((p) => p.fimTempo ?? agora));
   return Math.max(base, Math.ceil(maisAdiantado) + 2);
@@ -394,19 +475,19 @@ function quadro() {
 
       // barras de progresso dos cozinheiros
       for (const cook of p.cooks.values()) {
-        if (!cook.pedido) continue;
-        const d = cook.pedido;
+        if (!cook.exec) continue;
+        const d = cook.exec;
         const feito = Math.max(0, t - d.inicio);
         cook.barra.style.width = Math.min(100, (feito / d.burst) * 100) + "%";
         cook.prog.textContent = `${Math.min(d.burst, Math.floor(feito))}/${d.burst}u`;
       }
 
       // blocos do Gantt (os em andamento crescem em tempo real)
-      for (const d of p.pedidos.values()) {
-        if (!d.bloco) continue;
-        const fimVisivel = d.fim ?? Math.min(t, d.inicio + d.burst);
-        d.bloco.style.left = (d.inicio / T) * 100 + "%";
-        d.bloco.style.width = (Math.max(0, fimVisivel - d.inicio) / T) * 100 + "%";
+      for (const e of p.execs) {
+        if (!e.bloco) continue;
+        const fimVisivel = e.fim ?? Math.min(t, e.inicio + e.burst);
+        e.bloco.style.left = (e.inicio / T) * 100 + "%";
+        e.bloco.style.width = (Math.max(0, fimVisivel - e.inicio) / T) * 100 + "%";
       }
 
       // cursor "agora" e eixo
@@ -421,6 +502,7 @@ function quadro() {
 // ---------------------------------------------------------------- comparativo final
 function mostrarComparativo(resultados) {
   const algs = cfg.algoritmos;
+  const sync = cfg.sincronizada;
   const dados = {};
   for (const alg of algs) {
     const r = resultados[alg];
@@ -431,41 +513,69 @@ function mostrarComparativo(resultados) {
 
   const [a, b] = algs;
   const empate = Math.abs(dados[a].tme - dados[b].tme) < 1e-9;
-  const venc = empate ? null : (dados[a].tme < dados[b].tme ? a : b);
+  // Sem sincronização os números estão contaminados: não declaramos vencedor.
+  const venc = (!sync || empate) ? null : (dados[a].tme < dados[b].tme ? a : b);
   const perd = venc === a ? b : a;
   const maxTme = Math.max(dados[a].tme, dados[b].tme);
 
-  // --- veredito em texto
-  let veredito;
-  if (empate) {
-    veredito = `Empate no Tempo Médio de Espera: ${fmt(dados[a].tme)}.`;
+  // --- aviso (modo sem sincronização) ou veredito (modo normal)
+  let topo;
+  if (!sync) {
+    const itens = algs.map((alg) => {
+      const r = dados[alg].r;
+      const ids = new Set(r.pedidos.map((d) => d.id)).size;
+      return `<li><b>${alg}</b>: ${r.execucoes} preparos para ${ids} pedidos ` +
+             `· ${r.conflitos} pedido(s) pego(s) por 2 cozinheiros ` +
+             `· contador de entregas = ${r.contador_entregas} (esperado ${r.execucoes})</li>`;
+    }).join("");
+    topo = `
+      <div class="aviso-sync">
+        <strong>⚠️ Execução SEM sincronização: resultados não confiáveis</strong>
+        <ul>${itens}</ul>
+        <p>Sem exclusão mútua, dois cozinheiros decidiram pelo mesmo pedido antes de qualquer um removê-lo
+           da fila. O trabalho foi feito em duplicidade, o tempo total aumentou e o TME deixou de refletir
+           o algoritmo. Ligue a chave <b>Sincronização (Lock)</b> e rode de novo para comparar.</p>
+      </div>`;
   } else {
-    const pct = ((dados[perd].tme - dados[venc].tme) / dados[perd].tme) * 100;
-    veredito = `<strong>${venc}</strong> teve o menor TME: ${fmt(dados[venc].tme)} contra ${fmt(dados[perd].tme)} ` +
-               `(${pct.toFixed(1).replace(".", ",")}% menor).`;
-  }
-  veredito += ` Pedido que mais esperou: ` +
-    algs.map((x) => `${x} → P${dados[x].pior.id} (${dados[x].pior.valor}u)`).join(" · ") + ".";
-  if (dados.SJF && dados.FCFS && dados.SJF.pior.valor > dados.FCFS.pior.valor) {
-    veredito += " O SJF reduz a média, mas pedidos longos podem esperar mais (risco de starvation).";
+    let veredito;
+    if (empate) {
+      veredito = `Empate no Tempo Médio de Espera: ${fmt(dados[a].tme)}.`;
+    } else {
+      const pct = ((dados[perd].tme - dados[venc].tme) / dados[perd].tme) * 100;
+      veredito = `<strong>${venc}</strong> teve o menor TME: ${fmt(dados[venc].tme)} contra ${fmt(dados[perd].tme)} ` +
+                 `(${pct.toFixed(1).replace(".", ",")}% menor).`;
+    }
+    veredito += ` Pedido que mais esperou: ` +
+      algs.map((x) => `${x} → P${dados[x].pior.id} (${dados[x].pior.valor}u)`).join(" · ") + ".";
+    if (dados.SJF && dados.FCFS && dados.SJF.pior.valor > dados.FCFS.pior.valor) {
+      veredito += " O SJF reduz a média, mas pedidos longos podem esperar mais (risco de starvation).";
+    }
+    topo = `<div class="veredito">${veredito}</div>`;
   }
 
   // --- cartões grandes
   const cartoes = algs.map((alg) => `
-    <div class="comp-card ${alg.toLowerCase()} ${alg === venc ? "vencedor" : ""}">
+    <div class="comp-card ${alg.toLowerCase()} ${alg === venc ? "vencedor" : ""} ${sync ? "" : "invalido"}">
       ${alg === venc ? '<span class="coroa">🏆 menor TME</span>' : ""}
       <h3>${alg}</h3>
       <div class="grande">${fmt(dados[alg].tme)}</div>
-      <div class="rot">Tempo Médio de Espera (TME)</div>
+      <div class="rot">Tempo Médio de Espera (TME)${sync ? "" : " · inválido"}</div>
       <div class="barra-tme"><i style="width:0%" data-alvo="${(dados[alg].tme / maxTme) * 100}"></i></div>
     </div>`).join("");
 
   // --- tabela de métricas (destaca o menor valor de cada linha)
   const linha = (rotulo, chave, formatar) => {
     const va = dados[a][chave], vb = dados[b][chave];
-    const cel = (v, outro) => `<td class="num ${v < outro ? "melhor" : ""}">${formatar(v)}</td>`;
+    const cel = (v, outro) => `<td class="num ${sync && v < outro ? "melhor" : ""}">${formatar(v)}</td>`;
     return `<tr><td>${rotulo}</td>${cel(va, vb)}${cel(vb, va)}</tr>`;
   };
+  const linhasSemSync = sync ? "" : `
+        <tr><td>Preparos realizados (pedidos: ${cfg.pedidos.length})</td>
+            ${algs.map((x) => `<td class="num ${dados[x].r.execucoes > cfg.pedidos.length ? "ruim" : ""}">${dados[x].r.execucoes}</td>`).join("")}</tr>
+        <tr><td>Pedidos pegos por 2 cozinheiros</td>
+            ${algs.map((x) => `<td class="num ${dados[x].r.conflitos ? "ruim" : ""}">${dados[x].r.conflitos}</td>`).join("")}</tr>
+        <tr><td>Contador de entregas (esperado = preparos)</td>
+            ${algs.map((x) => `<td class="num ${dados[x].r.contador_entregas !== dados[x].r.execucoes ? "ruim" : ""}">${dados[x].r.contador_entregas}</td>`).join("")}</tr>`;
   const tabela = `
     <table class="tab">
       <thead><tr><th>Métrica</th><th class="num">${a}</th><th class="num">${b}</th></tr></thead>
@@ -476,6 +586,7 @@ function mostrarComparativo(resultados) {
             <td class="num">${dados[a].pior.valor}u (P${dados[a].pior.id})</td>
             <td class="num">${dados[b].pior.valor}u (P${dados[b].pior.id})</td></tr>
         ${linha("Duração total (makespan)", "dur", (v) => v + "u")}
+        ${linhasSemSync}
       </tbody>
     </table>`;
 
@@ -492,10 +603,11 @@ function mostrarComparativo(resultados) {
 
   const raiz = $("#comparativo");
   raiz.innerHTML = `
-    <h2>🏁 Comparativo final</h2>
+    <h2>🏁 Comparativo final${sync ? "" : " (sem sincronização)"}</h2>
     <p class="sub">Mesma carga de ${cfg.pedidos.length} pedidos e ${cfg.cozinheiros.length} cozinheiros em cada algoritmo.</p>
+    ${sync ? "" : topo}
     <div class="comp-cards">${cartoes}</div>
-    <div class="veredito">${veredito}</div>
+    ${sync ? topo : ""}
     ${tabela}
     <h3 class="sec">Espera de cada pedido</h3>
     <table class="tab">

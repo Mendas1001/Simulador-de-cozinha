@@ -26,6 +26,7 @@ class TipoEvento(Enum):
     INICIO = "inicio"   # cozinheiro pegou um pedido
     FIM = "fim"         # cozinheiro terminou um pedido
     OCIOSO = "ocioso"   # cozinheiro encerrou (fila vazia)
+    CONFLITO = "conflito"  # (sem sincronização) 2 cozinheiros pegaram o mesmo pedido
 
 
 @dataclass
@@ -36,6 +37,7 @@ class Evento:
     cozinheiro: str | None   # None em eventos da esteira (CHEGADA)
     pedido_id: int | None = None
     burst: int | None = None
+    outro: str | None = None   # CONFLITO: quem tinha pegado o pedido antes
 
     def to_dict(self) -> dict:
         d = asdict(self)

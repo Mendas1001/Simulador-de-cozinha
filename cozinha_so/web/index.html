@@ -41,6 +41,14 @@
       <label id="lbl-seed" hidden>Seed
         <input type="text" id="seed" placeholder="auto" size="7">
       </label>
+      <label class="chave" title="Desligue para demonstrar a condição de corrida">
+        <span>Sincronização (Lock)</span>
+        <span class="chave-corpo">
+          <input type="checkbox" id="sync" checked>
+          <span class="trilho"><span class="bola"></span></span>
+          <em id="sync-txt">Ligada</em>
+        </span>
+      </label>
       <button id="btn-iniciar" type="button">▶ Iniciar simulação</button>
       <span id="status" class="status">Pronto</span>
     </div>
@@ -69,6 +77,7 @@
         <div>
           <h2 class="alg-titulo"></h2>
           <p class="alg-desc"></p>
+          <p class="modo" data-el="modo"></p>
         </div>
         <div class="relogio">
           <small>tempo</small>
@@ -76,6 +85,8 @@
           <span class="selo" data-el="selo">em andamento</span>
         </div>
       </header>
+
+      <div class="alerta" data-el="alerta" hidden></div>
 
       <div class="bloco">
         <h3>📥 Esteira de pedidos <small data-el="faltam"></small></h3>
@@ -101,10 +112,11 @@
         <div><small>Concluídos</small><strong data-el="m-conc">0/0</strong></div>
         <div><small>Na fila agora</small><strong data-el="m-fila">0</strong></div>
         <div><small>TME parcial</small><strong data-el="m-tme">—</strong></div>
+        <div data-el="box-conf" hidden><small>Conflitos</small><strong data-el="m-conf">0</strong></div>
       </div>
 
-      <details class="logbox">
-        <summary>Log em tempo real</summary>
+      <details class="logbox" data-el="logbox">
+        <summary>Log em tempo real (saída do console)</summary>
         <div class="log" data-el="log"></div>
       </details>
     </article>

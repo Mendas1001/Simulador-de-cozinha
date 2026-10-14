@@ -36,6 +36,9 @@ class ResultadoSimulacao:
     algoritmo: str
     pedidos: List[Pedido]          # concluídos, ordenados por ID
     cozinheiros: List[str]
+    sincronizada: bool = True       # a esteira usou Lock?
+    conflitos: int = 0              # pedidos entregues a 2 cozinheiros
+    contador_entregas: int = 0      # valor do contador compartilhado
 
     @property
     def tme(self) -> float:
@@ -58,6 +61,10 @@ class ResultadoSimulacao:
             "tme": self.tme,
             "tmt": self.tmt,
             "duracao": self.duracao,
+            "sincronizada": self.sincronizada,
+            "conflitos": self.conflitos,
+            "contador_entregas": self.contador_entregas,
+            "execucoes": len(self.pedidos),   # preparos realizados (> nº de pedidos se houve duplicidade)
             "pedidos": [p.to_dict() for p in self.pedidos],
         }
 
@@ -68,14 +75,26 @@ class ResultadoSimulacao:
 class Simulacao:
     def __init__(self, escalonador: Escalonador, pedidos: Sequence[Pedido],
                  num_cozinheiros: int = 2, escala: float = 0.25,
-                 ouvintes: Optional[Sequence[Ouvinte]] = None) -> None:
+                 ouvintes: Optional[Sequence[Ouvinte]] = None,
+                 sincronizada: bool = True) -> None:
         self.escalonador = escalonador
         self.num_cozinheiros = num_cozinheiros
+        self.sincronizada = sincronizada
         self.relogio = Relogio(escala)
-        self.esteira = EsteiraPedidos(escalonador, self.relogio)
+        # Janela da condição de corrida (só usada sem sincronização):
+        # proporcional à velocidade, para a demo funcionar em qualquer escala.
+        janela_s = max(0.005, escala * 0.25)
+        self.esteira = EsteiraPedidos(escalonador, self.relogio,
+                                      sincronizada=sincronizada, janela_s=janela_s,
+                                      ao_conflito=self._ao_conflito)
         self._ouvintes = list(ouvintes or [])
         # Cópias limpas: nenhuma simulação altera os pedidos originais.
         self._pedidos = [p.copia_inicial() for p in pedidos]
+
+    def _ao_conflito(self, pedido: Pedido, primeiro: str, segundo: str) -> None:
+        """Chamada pela esteira (sem sincronização) quando detecta pedido duplicado."""
+        self._emitir(Evento(TipoEvento.CONFLITO, self.escalonador.nome, pedido.inicio,
+                            segundo, pedido.id, pedido.burst, primeiro))
 
     def _emitir(self, evento: Evento) -> None:
         for ouvinte in self._ouvintes:
@@ -112,8 +131,10 @@ class Simulacao:
             t.join()
         anunciador.join()
 
-        return ResultadoSimulacao(self.escalonador.nome,
-                                  self.esteira.concluidos(), nomes)
+        return ResultadoSimulacao(self.escalonador.nome, self.esteira.concluidos(), nomes,
+                                  sincronizada=self.sincronizada,
+                                  conflitos=self.esteira.conflitos,
+                                  contador_entregas=self.esteira.total_entregas)
 
 
 # ----------------------------------------------------------------------
@@ -121,16 +142,18 @@ class Simulacao:
 # ----------------------------------------------------------------------
 def comparar(pedidos: Sequence[Pedido], num_cozinheiros: int = 2,
              escala: float = 0.25, simultaneo: bool = False,
-             ouvintes: Optional[Sequence[Ouvinte]] = None
-             ) -> Dict[str, ResultadoSimulacao]:
+             ouvintes: Optional[Sequence[Ouvinte]] = None,
+             sincronizada: bool = True) -> Dict[str, ResultadoSimulacao]:
     """
     Executa todos os algoritmos registrados com a mesma carga inicial.
 
     simultaneo=False -> um após o outro (saída do terminal mais legível)
     simultaneo=True  -> os dois ao mesmo tempo, cada um com sua própria
                         esteira e seus próprios cozinheiros
+    sincronizada=False -> esteira SEM Lock (demonstra condição de corrida)
     """
-    simulacoes = {nome: Simulacao(cls(), pedidos, num_cozinheiros, escala, ouvintes)
+    simulacoes = {nome: Simulacao(cls(), pedidos, num_cozinheiros, escala, ouvintes,
+                           sincronizada)
                   for nome, cls in ESCALONADORES.items()}
     resultados: Dict[str, ResultadoSimulacao] = {}
 

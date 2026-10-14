@@ -198,7 +198,8 @@ main { padding: 24px 28px 60px; max-width: 1500px; margin: 0 auto; }
 .metricas > div { background: var(--card-2); border: 1px solid var(--borda); border-radius: 10px; padding: 9px 12px; }
 .metricas small { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--suave); }
 .metricas strong { font-size: 21px; font-variant-numeric: tabular-nums; }
-.metricas > div:last-child strong { color: var(--cor); }
+.metricas [data-el="m-tme"] { color: var(--cor); }
+.metricas [data-el="m-conf"] { color: var(--erro); }
 
 /* ---------------- Log ---------------- */
 .logbox { margin-top: 12px; font-size: 12.5px; color: var(--suave); }
@@ -207,8 +208,8 @@ main { padding: 24px 28px 60px; max-width: 1500px; margin: 0 auto; }
   margin-top: 8px; max-height: 150px; overflow-y: auto; padding: 8px 10px;
   background: #0b0908; border-radius: 8px; border: 1px solid var(--borda);
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-all;
 }
-.log div b { color: var(--acento); font-weight: 600; }
 
 /* ---------------- Comparativo final ---------------- */
 .comparativo {
@@ -265,3 +266,62 @@ table.tab td.num, table.tab th.num { text-align: right; }
   main { padding: 16px 14px 50px; }
   .topo { padding: 12px 14px; }
 }
+
+
+/* ==========================================================
+   Modo SEM sincronização (demonstração de condição de corrida)
+   ========================================================== */
+.chave { cursor: pointer; }
+.chave-corpo { display: flex; align-items: center; gap: 8px; height: 34px; text-transform: none; letter-spacing: 0; }
+.chave input { position: absolute; opacity: 0; pointer-events: none; }
+.chave .trilho {
+  width: 42px; height: 22px; border-radius: 99px; background: var(--erro);
+  position: relative; transition: background .2s; flex: none;
+}
+.chave .bola {
+  position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; transition: transform .2s;
+}
+.chave input:checked + .trilho { background: var(--sjf); }
+.chave input:checked + .trilho .bola { transform: translateX(20px); }
+.chave input:focus-visible + .trilho { outline: 2px solid var(--acento); outline-offset: 2px; }
+.chave em { font-style: normal; font-size: 13.5px; color: var(--texto); min-width: 66px; }
+
+.modo { font-size: 12px; margin-top: 4px; color: var(--sjf); font-weight: 600; }
+.painel.sem-sync { border-top-color: var(--erro); box-shadow: 0 0 0 1px rgba(255,107,107,.35), 0 0 28px rgba(255,107,107,.08); }
+.painel.sem-sync .modo { color: var(--erro); }
+
+.alerta {
+  margin-bottom: 4px; padding: 10px 14px; border-radius: 10px; font-size: 13.5px; font-weight: 700;
+  background: rgba(255,107,107,.14); border: 1px solid var(--erro); color: #ffb3b3;
+}
+.alerta.pisca { animation: pisca .9s ease-out; }
+@keyframes pisca {
+  0%   { background: rgba(255,107,107,.75); transform: translateX(-6px); }
+  20%  { transform: translateX(6px); }
+  40%  { transform: translateX(-4px); }
+  60%  { transform: translateX(3px); }
+  100% { background: rgba(255,107,107,.14); transform: none; }
+}
+
+.estacao.conflito { border-color: var(--erro); box-shadow: 0 0 0 1px var(--erro), 0 0 18px rgba(255,107,107,.25); }
+.estacao.conflito .est-status { color: var(--erro); font-weight: 700; }
+.chip.dup { background: rgba(255,107,107,.18); border-color: var(--erro); }
+.chip.dup small { color: #ffb3b3; font-weight: 700; }
+.g-bloco.dup {
+  color: #fff; background: repeating-linear-gradient(45deg, #c43d3d 0 6px, #e05a5a 6px 12px);
+  box-shadow: inset 0 0 0 2px #ffb3b3;
+}
+.metricas { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+.metricas .ruim { color: var(--erro) !important; }
+.log.caos { max-height: 220px; }
+
+.aviso-sync {
+  margin: 4px 0 18px; padding: 14px 18px; border-radius: 12px;
+  background: rgba(255,107,107,.12); border: 1px solid var(--erro); border-left-width: 5px;
+}
+.aviso-sync strong { color: #ffb3b3; font-size: 15px; }
+.aviso-sync ul { margin: 8px 0; padding-left: 20px; font-size: 13.5px; }
+.aviso-sync p { font-size: 13px; color: var(--suave); }
+.comp-card.invalido .grande { color: var(--erro); text-decoration: line-through; text-decoration-thickness: 2px; }
+td.ruim { color: var(--erro); font-weight: 700; }
