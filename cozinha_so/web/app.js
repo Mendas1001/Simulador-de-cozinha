@@ -48,7 +48,7 @@ $("#carga").addEventListener("change", () => {
   $("#lbl-seed").hidden = !aleatoria;
 });
 $("#sync").addEventListener("change", () => {
-  $("#sync-txt").textContent = $("#sync").checked ? "Ligada" : "Desligada";
+  $("#sync-txt").textContent = $("#sync").checked ? "Ligada (seguro)" : "Desligada (dá erro)";
   $("#sync-txt").style.color = $("#sync").checked ? "" : "var(--erro)";
 });
 btn.addEventListener("click", iniciar);
@@ -107,9 +107,6 @@ function tratar(ev) {
       // Em vez de interpretar como "sem sincronização", avisamos o que fazer.
       if (typeof ev.sincronizada !== "boolean") { servidorDesatualizado(); break; }
       montarPaineis(ev);
-      // reflete na barra de controles a chave usada (útil após F5)
-      $("#sync").checked = ev.sincronizada;
-      $("#sync").dispatchEvent(new Event("change"));
       const sufixo = ev.sincronizada ? "" : " · SEM sincronização";
       const seed = ev.seed != null ? ` (seed ${ev.seed})` : "";
       definirStatus(`Em execução…${seed}${sufixo}`, ev.sincronizada ? "rodando" : "erro");

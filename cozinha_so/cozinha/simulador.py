@@ -186,10 +186,19 @@ def carga_padrao() -> List[Pedido]:
 
 
 def carga_aleatoria(n: int, seed: Optional[int] = None) -> List[Pedido]:
-    """Gera n pedidos aleatórios (use seed para repetir a mesma carga)."""
+    """
+    Gera n pedidos aleatórios (use a mesma seed para repetir a mesma carga).
+
+    - Tempo de preparo: a maioria é curta, mas há alguns pratos demorados
+      (como numa cozinha de verdade): 45% de 1-3u, 35% de 4-7u, 20% de 8-12u.
+    - Chegadas: às vezes vários pedidos juntos (rajada), às vezes com folga.
+      O primeiro pedido também chega em um instante aleatório (0 a 2).
+    """
     rng = random.Random(seed)
-    pedidos, chegada = [], 0
+    pedidos: List[Pedido] = []
+    chegada = rng.randint(0, 2)
     for i in range(1, n + 1):
-        pedidos.append(Pedido(i, chegada, rng.randint(1, 9)))
-        chegada += rng.randint(0, 3)
+        faixa = rng.choices([(1, 3), (4, 7), (8, 12)], weights=[45, 35, 20])[0]
+        pedidos.append(Pedido(i, chegada, rng.randint(*faixa)))
+        chegada += rng.choices([0, 1, 2, 3, 5], weights=[25, 30, 25, 12, 8])[0]
     return pedidos

@@ -285,7 +285,7 @@ table.tab td.num, table.tab th.num { text-align: right; }
 .chave input:checked + .trilho { background: var(--sjf); }
 .chave input:checked + .trilho .bola { transform: translateX(20px); }
 .chave input:focus-visible + .trilho { outline: 2px solid var(--acento); outline-offset: 2px; }
-.chave em { font-style: normal; font-size: 13.5px; color: var(--texto); min-width: 66px; }
+.chave em { font-style: normal; font-size: 13.5px; color: var(--texto); min-width: 128px; }
 
 .modo { font-size: 12px; margin-top: 4px; color: var(--sjf); font-weight: 600; }
 .painel.sem-sync { border-top-color: var(--erro); box-shadow: 0 0 0 1px rgba(255,107,107,.35), 0 0 28px rgba(255,107,107,.08); }

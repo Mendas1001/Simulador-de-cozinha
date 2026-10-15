@@ -31,22 +31,22 @@
       </label>
       <label>Carga de pedidos
         <select id="carga">
-          <option value="padrao" selected>Padrão (8 pedidos)</option>
-          <option value="aleatoria">Aleatória</option>
+          <option value="aleatoria" selected>Aleatória (muda a cada rodada)</option>
+          <option value="padrao">Padrão fixa (8 pedidos)</option>
         </select>
       </label>
-      <label id="lbl-n" hidden>Pedidos
+      <label id="lbl-n">Pedidos
         <input type="number" id="n" min="1" max="30" value="10">
       </label>
-      <label id="lbl-seed" hidden>Seed
-        <input type="text" id="seed" placeholder="auto" size="7">
+      <label id="lbl-seed">Seed
+        <input type="text" id="seed" placeholder="nova a cada vez" size="13">
       </label>
       <label class="chave" title="Desligue para demonstrar a condição de corrida">
         <span>Sincronização (Lock)</span>
         <span class="chave-corpo">
           <input type="checkbox" id="sync" checked>
           <span class="trilho"><span class="bola"></span></span>
-          <em id="sync-txt">Ligada</em>
+          <em id="sync-txt">Ligada (seguro)</em>
         </span>
       </label>
       <button id="btn-iniciar" type="button">▶ Iniciar simulação</button>
